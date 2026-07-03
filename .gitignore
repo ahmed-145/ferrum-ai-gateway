@@ -1,0 +1,22 @@
+/target
+
+# Secrets — NEVER commit these
+.env
+.env.local
+.env.production
+.env.staging
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Benchmark outputs
+k6-results/
+*.html
+flamegraph.svg
+perf.data

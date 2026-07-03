@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ferrum-gateway
+  labels:
+    app: ferrum-gateway
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ferrum-gateway
+  template:
+    metadata:
+      labels:
+        app: ferrum-gateway
+    spec:
+      containers:
+        - name: gateway
+          image: ghcr.io/ahmeed/ferrum:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            limits:
+              cpu: "1"
+              memory: 128Mi
+            requests:
+              cpu: 100m
+              memory: 32Mi
+          livenessProbe:
+            httpGet:
+              path: /health/liveness
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          env:
+            - name: FERRUM_LOG_LEVEL
+              value: "info"
+            - name: FERRUM_PORT
+              value: "8080"

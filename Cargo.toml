@@ -1,0 +1,48 @@
+[package]
+name = "ferrum"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ferrum"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ferrum"
+path = "src/main.rs"
+
+[[test]]
+name = "test_config"
+path = "tests/unit/test_config.rs"
+
+[[test]]
+name = "test_rate_limit"
+path = "tests/unit/test_rate_limit.rs"
+
+[[test]]
+name = "test_streaming"
+path = "tests/integration/test_streaming.rs"
+
+[[test]]
+name = "test_fallback"
+path = "tests/integration/test_fallback.rs"
+
+[[test]]
+name = "test_groq"
+path = "tests/integration/test_groq.rs"
+
+[dependencies]
+tokio = { version = "1.38", features = ["full"] }
+axum = { version = "0.7.5" }
+reqwest = { version = "0.12.5", features = ["json", "stream"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+dashmap = "5.5"
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "timeout"] }
+bytes = "1.7"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures-util = "0.3"
+tokio-util = "0.7"

@@ -1,0 +1,141 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "title": "Throughput (Requests / Sec)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "editorMode": "code",
+          "expr": "sum(rate(ferrum_requests_total[1m])) by (provider, model, route)",
+          "legendFormat": "{{provider}} - {{model}} ({{route}})",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth"
+          },
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "title": "Error Rates (Non-2xx Status)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "editorMode": "code",
+          "expr": "sum(rate(ferrum_requests_total{status!~\"2..\"}[1m])) by (provider, status)",
+          "legendFormat": "{{provider}} ({{status}})",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line"
+          },
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "title": "Latency Overhead (P50, P95, P99)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(ferrum_request_duration_seconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "P99 {{provider}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": "Prometheus",
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum(rate(ferrum_request_duration_seconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "P95 {{provider}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": "Prometheus",
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.50, sum(rate(ferrum_request_duration_seconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "P50 {{provider}}",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line"
+          },
+          "unit": "s"
+        }
+      }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 36,
+  "style": "dark",
+  "tags": ["ferrum", "ai-gateway"],
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Ferrum AI Gateway Dashboard",
+  "version": 1
+}
