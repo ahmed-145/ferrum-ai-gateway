@@ -91,15 +91,17 @@ Python-based AI gateways (like LiteLLM) introduce meaningful latency in high-con
 
 ## Provider Support
 
-`ferrum` never holds API keys. The client sends their own key in `Authorization: Bearer <key>`, and `ferrum` forwards it to the upstream provider. The gateway itself needs zero provider accounts.
+`ferrum` never holds API keys. The client sends their own key in `Authorization: Bearer <key>`, and `ferrum` forwards it to the upstream provider. **All five providers are fully supported** — the "Free Tier" column only tells you whether you can test without a credit card.
 
-| Prefix | Provider | Free Tier | Protocol |
-|---|---|---|---|
-| `groq/` | [Groq](https://groq.com) | ✅ Yes | OpenAI-compatible |
-| `cerebras/` | [Cerebras](https://cerebras.ai) | ✅ Yes | OpenAI-compatible |
-| `gemini/` | [Google Gemini](https://ai.google.dev) | ✅ Yes | OpenAI-compatible endpoint |
-| `openai/` | [OpenAI](https://openai.com) | ❌ Paid | Native OpenAI |
-| `anthropic/` | [Anthropic](https://anthropic.com) | ❌ Paid | **Auto-translated** ↔ OpenAI |
+| Prefix | Provider | Free Tier | Works with paid key | Protocol |
+|---|---|---|---|---|
+| `groq/` | [Groq](https://groq.com) | ✅ Free | ✅ Yes | OpenAI-compatible |
+| `cerebras/` | [Cerebras](https://cerebras.ai) | ✅ Free | ✅ Yes | OpenAI-compatible |
+| `gemini/` | [Google Gemini](https://ai.google.dev) | ✅ Free | ✅ Yes | OpenAI-compatible endpoint |
+| `openai/` | [OpenAI](https://openai.com) | ❌ Requires credits | ✅ Yes | Native OpenAI |
+| `anthropic/` | [Anthropic](https://anthropic.com) | ❌ Requires credits | ✅ Yes — **auto-translated** ↔ OpenAI | Anthropic Messages API |
+
+> **In short:** if you have an API key with credits for any of the above, just put it in `Authorization: Bearer <your-key>` and use the matching model prefix. ferrum handles everything else.
 
 ### How Routing Works
 
