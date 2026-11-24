@@ -89,7 +89,7 @@ Python-based AI gateways (like LiteLLM) introduce meaningful latency in high-con
 
 ## Provider Support
 
-`ferrum` never holds API keys. The client sends their own key in `Authorization: Bearer <key>`, and `ferrum` forwards it to the upstream provider. **All five providers are fully supported** — the "Free Tier" column only tells you whether you can test without a credit card.
+`ferrum` never holds API keys. The client sends their own key in `Authorization: Bearer <key>`, and `ferrum` forwards it to the upstream provider. All five providers are routed. Only Anthropic needs translation; the other four use OpenAI-compatible endpoints and are passed through. Only the Groq path has a live test, and the other providers are tested against mock servers only. The "Free Tier" column only tells you whether you can test without a credit card.
 
 | Prefix | Provider | Free Tier | Works with paid key | Protocol |
 |---|---|---|---|---|
@@ -99,7 +99,7 @@ Python-based AI gateways (like LiteLLM) introduce meaningful latency in high-con
 | `openai/` | [OpenAI](https://openai.com) | ❌ Requires credits | ✅ Yes | Native OpenAI |
 | `anthropic/` | [Anthropic](https://anthropic.com) | ❌ Requires credits | ✅ Yes — **auto-translated** ↔ OpenAI | Anthropic Messages API |
 
-> **In short:** if you have an API key with credits for any of the above, just put it in `Authorization: Bearer <your-key>` and use the matching model prefix. ferrum handles everything else.
+> **In short:** if you have an API key with credits for any of the above, just put it in `Authorization: Bearer <your-key>` and use the matching model prefix. ferrum routes and forwards it. Note: if a request falls back to a different provider, your key is still forwarded to that provider and will likely be rejected (known issue).
 
 ### How Routing Works
 
@@ -115,7 +115,7 @@ Forwarded body:  { "model": "llama-3.1-8b-instant", ... }   ← prefix stripped
 
 ### Anthropic Translation (Automatic)
 
-Anthropic uses a different API shape. `ferrum` handles the full bidirectional translation transparently:
+Anthropic uses a different API shape. `ferrum` translates text chat requests and responses (including streaming) in both directions. Tool calls, images and other parameters are not translated yet:
 
 ```
 Client sends:  POST /v1/chat/completions  (OpenAI format)
@@ -436,7 +436,7 @@ ferrum/
 │   ├── health.rs            # /health/liveness + /health/readiness
 │   ├── providers/
 │   │   ├── mod.rs           # ProviderKind enum + model prefix extraction
-│   │   ├── anthropic.rs     # Full bidirectional OpenAI↔Anthropic translator
+│   │   ├── anthropic.rs     # OpenAI↔Anthropic translator (text chat only)
 │   │   ├── groq.rs          # Header mapping for Groq
 │   │   ├── cerebras.rs      # Header mapping for Cerebras
 │   │   ├── gemini.rs        # Header mapping for Gemini
