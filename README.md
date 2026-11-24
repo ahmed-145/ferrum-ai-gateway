@@ -83,7 +83,7 @@ Python-based AI gateways (like LiteLLM) introduce meaningful latency in high-con
 
 **Low-contention rate limiting.** `DashMap` is a sharded concurrent hashmap — reads and writes to different keys never block each other. The sliding window tracks per-key timestamps with a `Mutex<Vec<Instant>>` per bucket. A background tokio task cleans up expired buckets every 60 seconds to prevent memory growth.
 
-**Deterministic memory.** Rust's ownership model guarantees deallocation at the end of each request scope. There is no garbage collector to cause pauses, and no cyclic reference leaks. Memory usage stays flat under any load profile.
+**Deterministic memory.** Rust's ownership model frees request data at the end of each request scope, and there is no garbage collector to cause pauses. Memory behavior under sustained load has not been measured yet.
 
 ---
 
@@ -349,7 +349,7 @@ The Dockerfile uses a 4-stage `cargo-chef` build:
 1. **Planner** — fingerprints dependencies from `Cargo.toml`
 2. **Builder** — compiles all dependencies (cached layer — only rebuilds when deps change)
 3. **Compiler** — compiles only the application source
-4. **Runtime** — copies the static binary into `FROM scratch` (no OS, no shell, no CVE surface)
+4. **Runtime** — copies the static binary into `FROM scratch` (no OS or shell in the final image, so a much smaller attack surface)
 
 ```bash
 docker build -f deploy/Dockerfile -t ferrum:latest .
@@ -360,7 +360,7 @@ docker run -p 8080:8080 \
   ferrum:latest
 ```
 
-Final image size: **~25–30 MB** (statically linked musl binary + CA certificates only).
+Expected image size: a few tens of MB (statically linked musl binary + CA certificates only). Not measured yet.
 
 ### Kubernetes
 
@@ -494,7 +494,7 @@ ferrum/
 | Metrics | hand-written (atomics + `DashMap`) | Prometheus text exposition format |
 | Tracing | `tracing` + `tracing-subscriber` | Structured async-aware logging |
 | Docker caching | `cargo-chef` | Layer-split builds — deps cached, only app source recompiles |
-| Static linking | musl (`x86_64-unknown-linux-musl`) | 100% static binary; no host OS deps; immune to OS CVEs |
+| Static linking | musl (`x86_64-unknown-linux-musl`) | Static binary; no host OS dependencies in the final image |
 
 ---
 
