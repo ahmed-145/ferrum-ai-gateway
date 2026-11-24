@@ -13,16 +13,14 @@ Python-based AI gateways (like LiteLLM) introduce meaningful latency in high-con
 - The **cyclic garbage collector** introduces unpredictable stop-the-world pauses mid-stream
 - At 50+ concurrent agent calls, a 7ms gateway overhead compounds into **350ms of pure infrastructure tax per loop iteration**
 
-`ferrum` moves the hot path to a compiled Rust binary. The result:
+`ferrum` moves the hot path to a compiled Rust binary. Design targets (**not yet measured on this code**: the Python figures come from a third-party analysis, and the ferrum figures are goals from the PRD):
 
-| Metric | Python Gateway | ferrum (Rust) | Improvement |
+| Metric | Python Gateway | ferrum (Rust) target | Target improvement |
 |---|---|---|---|
 | P99 request overhead | ~7.5 ms | ~0.08 ms | **93× faster** |
 | Max sustained throughput | ~453 RPS | ~6,782 RPS | **15× higher** |
 | Peak memory (RSS) | ~359 MB | ~32 MB | **11× lower** |
 | P99 tail latency @ 500 RPS | ~90s (queue buildup) | ~1.68s | **54× lower** |
-
-> LiteLLM announced migration to a Rust data plane in June 2026. `ferrum` is a ground-up implementation of the same architecture.
 
 ---
 
@@ -34,7 +32,7 @@ Python-based AI gateways (like LiteLLM) introduce meaningful latency in high-con
 2. **Routes** to the correct provider based on the model prefix in the request body
 3. **Translates** headers and request/response format where needed (Anthropic uses a different API shape)
 4. **Streams** the response back chunk-by-chunk — the instant a byte arrives from the provider, it goes to the client
-5. **Rate limits** each API key with a lock-free sliding window
+5. **Rate limits** each API key with a sliding window
 6. **Retries** on 429/5xx with exponential backoff + jitter, then fails over to a secondary provider
 7. **Exposes** Prometheus metrics at `/metrics` for real-time observability
 
@@ -55,7 +53,7 @@ Python-based AI gateways (like LiteLLM) introduce meaningful latency in high-con
 │  ┌─────────────┐   ┌──────────────────┐   ┌──────────────┐  │
 │  │ axum Router │──▶│  Auth Extractor  │──▶│  DashMap     │  │
 │  │             │   │  Bearer / x-api  │   │  Rate Limiter│  │
-│  │ /v1/chat/   │   └──────────────────┘   │  (lock-free) │  │
+│  │ /v1/chat/   │   └──────────────────┘   │  (sharded)   │  │
 │  │ completions │                          └──────────────┘  │
 │  │ /v1/messages│   ┌──────────────────┐                     │
 │  │ /health/*   │   │ Provider Router  │                     │
@@ -66,7 +64,7 @@ Python-based AI gateways (like LiteLLM) introduce meaningful latency in high-con
 │                             │                               │
 │                    ┌────────▼─────────┐                     │
 │                    │  reqwest Pool    │                     │
-│                    │  HTTP/2 keepalive│                     │
+│                    │  keepalive pool  │                     │
 │                    │  SSE passthrough │                     │
 │                    └────────┬─────────┘                     │
 │                             │  retry + jitter backoff       │
@@ -81,9 +79,9 @@ Python-based AI gateways (like LiteLLM) introduce meaningful latency in high-con
 
 **No Python in the hot path.** The Rust binary owns the full request lifecycle: socket accept → auth → rate limit → upstream forward → stream passthrough → metric record. Zero interpreter overhead.
 
-**Zero-copy streaming.** SSE chunks from upstream are piped directly into the downstream response via `axum::Body::from_stream(reqwest::bytes_stream())`. No buffering, no collecting — TTFT (time-to-first-token) is within milliseconds of the raw provider.
+**Streaming passthrough.** SSE chunks from upstream are piped directly into the downstream response via `axum::Body::from_stream(reqwest::bytes_stream())`. No buffering, no collecting — TTFT (time-to-first-token) is within milliseconds of the raw provider.
 
-**Lock-free rate limiting.** `DashMap` is a sharded concurrent hashmap — reads and writes to different keys never block each other. The sliding window tracks per-key timestamps with a `Mutex<Vec<Instant>>` per bucket. A background tokio task cleans up expired buckets every 60 seconds to prevent memory growth.
+**Low-contention rate limiting.** `DashMap` is a sharded concurrent hashmap — reads and writes to different keys never block each other. The sliding window tracks per-key timestamps with a `Mutex<Vec<Instant>>` per bucket. A background tokio task cleans up expired buckets every 60 seconds to prevent memory growth.
 
 **Deterministic memory.** Rust's ownership model guarantees deallocation at the end of each request scope. There is no garbage collector to cause pauses, and no cyclic reference leaks. Memory usage stays flat under any load profile.
 
@@ -312,8 +310,8 @@ Import `deploy/prometheus/ferrum-dashboard.json` into Grafana for a pre-built da
 
 | Endpoint | What it checks | Used by |
 |---|---|---|
-| `GET /health/liveness` | tokio event loop is alive | K8s `livenessProbe` |
-| `GET /health/readiness` | gateway is ready to serve | K8s `readinessProbe` |
+| `GET /health/liveness` | process is up and answering | K8s `livenessProbe` |
+| `GET /health/readiness` | always returns 200 (no dependency checks yet) | K8s `readinessProbe` |
 
 ---
 
@@ -394,13 +392,13 @@ readinessProbe:
 Requires [k6](https://k6.io/docs/get-started/installation/).
 
 ```bash
-# Steady-state: 100 virtual users for 30 minutes (proves no memory growth)
+# Steady-state: 100 virtual users for 30 minutes (intended to check for memory growth)
 k6 run k6/steady_state.js
 
-# Spike: 0 → 5,000 VUs in 10 seconds (proves tokio work-stealing handles bursts)
+# Spike: 0 → 5,000 VUs in 10 seconds (intended to test burst handling)
 k6 run k6/spike.js
 
-# Soak: 50 VUs for 72 hours (proves zero memory leak — Rust ownership by construction)
+# Soak: 50 VUs for 72 hours (intended to check for memory growth; no results published yet)
 k6 run k6/soak.js
 ```
 
@@ -490,12 +488,11 @@ ferrum/
 |---|---|---|
 | Async runtime | `tokio` | Multi-threaded work-stealing scheduler — no GIL equivalent |
 | HTTP server | `axum` | Built on `hyper`; Tower-native middleware; macro-free routing |
-| HTTP client | `reqwest` | Connection pooling, HTTP/2 keepalive, native SSE byte streaming |
-| Rate limiting | `dashmap` | Lock-free sharded hashmap; no `Mutex<HashMap>` contention |
-| JSON | `serde_json` | Zero-copy deserialization into typed structs |
-| Metrics | `prometheus-client` | Native Prometheus text exposition format |
+| HTTP client | `reqwest` | Connection pooling, TCP keepalive, native SSE byte streaming |
+| Rate limiting | `dashmap` | Sharded concurrent hashmap; less contention than one `Mutex<HashMap>` |
+| JSON | `serde_json` | Typed and dynamic JSON parsing |
+| Metrics | hand-written (atomics + `DashMap`) | Prometheus text exposition format |
 | Tracing | `tracing` + `tracing-subscriber` | Structured async-aware logging |
-| Structured concurrency | `tokio-util` | `CancellationToken` for clean task teardown on disconnect |
 | Docker caching | `cargo-chef` | Layer-split builds — deps cached, only app source recompiles |
 | Static linking | musl (`x86_64-unknown-linux-musl`) | 100% static binary; no host OS deps; immune to OS CVEs |
 
