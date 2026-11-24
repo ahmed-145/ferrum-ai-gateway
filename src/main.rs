@@ -33,6 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // 3. Create HTTP client pool with connection pooling and keep-alive
     let max_conns = config.server.max_connections.unwrap_or(10000);
     let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .pool_max_idle_per_host(max_conns)
         .pool_idle_timeout(Duration::from_secs(90))
         .tcp_keepalive(Some(Duration::from_secs(60)))

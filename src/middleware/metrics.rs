@@ -85,7 +85,7 @@ impl MetricsCollector {
             "provider=\"{}\",model=\"{}\",route=\"{}\"",
             provider, model, route
         );
-        let hist_entry = self.latency_histograms.entry(hist_key).or_insert_with(Histogram::new);
+        let hist_entry = self.latency_histograms.entry(hist_key).or_default();
         hist_entry.value().record(duration);
     }
 

@@ -60,6 +60,7 @@ async fn test_openai_compatible_stream_passthrough() {
     providers.insert(
         "groq".to_string(),
         ProviderConfig {
+            api_key: Some("mock-provider-key".to_string()),
             base_url: format!("http://{}", mock_provider_addr),
             timeout_secs: 5,
             max_retries: 1,
@@ -157,6 +158,7 @@ async fn test_anthropic_stream_translation() {
     providers.insert(
         "anthropic".to_string(),
         ProviderConfig {
+            api_key: Some("mock-provider-key".to_string()),
             base_url: format!("http://{}", mock_provider_addr),
             timeout_secs: 5,
             max_retries: 1,

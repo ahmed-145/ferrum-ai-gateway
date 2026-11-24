@@ -25,6 +25,7 @@ async fn test_live_groq_completions_if_key_available() {
     providers.insert(
         "groq".to_string(),
         ProviderConfig {
+            api_key: Some(key),
             base_url: "https://api.groq.com/openai/v1".to_string(),
             timeout_secs: 30,
             max_retries: 3,
@@ -74,7 +75,7 @@ async fn test_live_groq_completions_if_key_available() {
 
     let res = client
         .post(format!("http://{}/v1/chat/completions", ferrum_addr))
-        .header("Authorization", format!("Bearer {}", key))
+        .header("Authorization", "Bearer test-client-key")
         .json(&req_body)
         .send()
         .await

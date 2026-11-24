@@ -89,7 +89,9 @@ Python-based AI gateways (like LiteLLM) introduce meaningful latency in high-con
 
 ## Provider Support
 
-`ferrum` never holds API keys. The client sends their own key in `Authorization: Bearer <key>`, and `ferrum` forwards it to the upstream provider. All five providers are routed. Only Anthropic needs translation; the other four use OpenAI-compatible endpoints and are passed through. Only the Groq path has a live test, and the other providers are tested against mock servers only. The "Free Tier" column only tells you whether you can test without a credit card.
+Ferrum authenticates upstream requests with the API key configured for the selected provider. The client supplies a credential in `Authorization: Bearer <key>` for per-client rate limiting.
+
+All five providers are routed. Ferrum translates text chat for Anthropic and passes through the other four OpenAI-compatible endpoints. Groq has a live integration test, and the integration suite also exercises mock providers.
 
 | Prefix | Provider | Free Tier | Works with paid key | Protocol |
 |---|---|---|---|---|
@@ -98,8 +100,6 @@ Python-based AI gateways (like LiteLLM) introduce meaningful latency in high-con
 | `gemini/` | [Google Gemini](https://ai.google.dev) | ✅ Free | ✅ Yes | OpenAI-compatible endpoint |
 | `openai/` | [OpenAI](https://openai.com) | ❌ Requires credits | ✅ Yes | Native OpenAI |
 | `anthropic/` | [Anthropic](https://anthropic.com) | ❌ Requires credits | ✅ Yes — **auto-translated** ↔ OpenAI | Anthropic Messages API |
-
-> **In short:** if you have an API key with credits for any of the above, just put it in `Authorization: Bearer <your-key>` and use the matching model prefix. ferrum routes and forwards it. Note: if a request falls back to a different provider, your key is still forwarded to that provider and will likely be rejected (known issue).
 
 ### How Routing Works
 
@@ -146,7 +146,10 @@ cd ferrum-ai-gateway
 
 # Copy the env template and fill in your key(s)
 cp .env.example .env
-# Edit .env — add your GROQ_API_KEY (free tier)
+# Edit .env and set your provider keys, then export them
+set -a
+source .env
+set +a
 
 # Run tests first
 cargo test
@@ -162,7 +165,7 @@ cargo run --release
 # Non-streaming (Groq — free)
 curl http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $GROQ_API_KEY" \
+  -H "Authorization: Bearer <gateway-client-key>" \
   -d '{
     "model": "groq/llama-3.1-8b-instant",
     "messages": [{"role": "user", "content": "What is Rust?"}]
@@ -171,7 +174,7 @@ curl http://localhost:8080/v1/chat/completions \
 # Streaming (Cerebras — free)
 curl http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $CEREBRAS_API_KEY" \
+  -H "Authorization: Bearer <gateway-client-key>" \
   -d '{
     "model": "cerebras/llama3.1-8b",
     "messages": [{"role": "user", "content": "Count to 5."}],
@@ -181,7 +184,7 @@ curl http://localhost:8080/v1/chat/completions \
 # Anthropic via OpenAI format (auto-translated)
 curl http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ANTHROPIC_API_KEY" \
+  -H "Authorization: Bearer <gateway-client-key>" \
   -d '{
     "model": "anthropic/claude-3-5-sonnet-20241022",
     "messages": [{"role": "user", "content": "Hello."}],
@@ -203,7 +206,7 @@ Because ferrum is fully OpenAI-compatible, just point the SDK's base URL at the 
 from openai import OpenAI
 
 client = OpenAI(
-    api_key="your-groq-key",
+    api_key="your-gateway-client-key",
     base_url="http://localhost:8080/v1",
 )
 
@@ -221,7 +224,7 @@ for chunk in response:
 
 ## Configuration
 
-`ferrum.toml` lives in the project root. No secrets ever go here — it is checked into the repo. API keys are sent by clients at request time.
+`ferrum.toml` lives in the project root. Keep secrets out of this checked-in file. Set `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` in the gateway environment. A private config can also set `api_key` under each provider. A nonempty environment value takes precedence.
 
 ```toml
 [server]
@@ -262,7 +265,8 @@ window_secs = 60
 [fallback]
 enabled = true
 default_fallback_model = "gemini/gemini-2.0-flash"   # used after all retries exhausted
-max_attempts = 3
+additional_fallback_models = []  # optional, tried in order after the default
+max_attempts = 3                # maximum eligible fallback models to try
 backoff_ms = 500               # base delay; doubles per retry + ±25% jitter
 
 [metrics]
@@ -321,7 +325,7 @@ When an upstream provider returns **HTTP 429** (rate limited) or **5xx** (server
 
 1. **Retries** the same provider up to `max_retries` times
 2. Each retry waits `backoff_ms × 2^attempt` milliseconds, **±25% jitter** (prevents thundering herd)
-3. If all retries are exhausted, **falls back** to `default_fallback_model` (e.g. `gemini/gemini-2.0-flash`)
+3. If all retries are exhausted, **tries** `default_fallback_model` followed by `additional_fallback_models` in order. Ferrum skips providers without usable configured keys and returns HTTP 503 if no eligible fallback is available.
 4. Non-retryable errors (400 Bad Request, 401 Unauthorized, 403 Forbidden) are returned immediately — no retries
 
 ```

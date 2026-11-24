@@ -44,7 +44,7 @@ impl RateLimiter {
 
         // Retain keys that have at least one active timestamp
         self.windows.retain(|_, mutex_ts| {
-            if let Ok(mut timestamps) = mutex_ts.lock() {
+            if let Ok(timestamps) = mutex_ts.get_mut() {
                 timestamps.retain(|&ts| ts > cutoff);
                 !timestamps.is_empty()
             } else {

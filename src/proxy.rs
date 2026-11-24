@@ -12,15 +12,7 @@ use tracing::{error, info, warn};
 
 use crate::AppState;
 use crate::middleware::auth::ClientAuth;
-use crate::providers::{
-    extract_provider_and_model,
-    ProviderKind,
-    anthropic,
-    cerebras,
-    gemini,
-    groq,
-    openai,
-};
+use crate::providers::{anthropic, extract_provider_and_model, ProviderKind};
 
 #[derive(serde::Deserialize)]
 struct ChatCompletionRequestHelper {
@@ -29,7 +21,6 @@ struct ChatCompletionRequestHelper {
 }
 
 /// Handler for POST /v1/chat/completions
-#[allow(unused_assignments)]
 pub async fn handle_chat_completions(
     State(app_state): State<Arc<AppState>>,
     auth: ClientAuth,
@@ -95,30 +86,49 @@ pub async fn handle_chat_completions(
     }
 
     // 4. Fallback and retry loop
+    let Some(mut provider_config) = app_state.config.providers.get(current_provider.as_str()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("Provider {} not configured", current_provider.as_str()),
+        )
+            .into_response();
+    };
+    let Some(mut outbound_headers) = current_provider.upstream_headers(provider_config) else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!(
+                "No usable API key configured for provider {}",
+                current_provider.as_str()
+            ),
+        )
+            .into_response();
+    };
+
+    let fallback_config = app_state.config.fallback.as_ref().filter(|cfg| cfg.enabled);
+    let mut fallbacks = fallback_config.map(|cfg| {
+        std::iter::once(&cfg.default_fallback_model)
+            .chain(&cfg.additional_fallback_models)
+            .filter_map(|model| {
+                let (provider, model) = extract_provider_and_model(model)?;
+                if provider == original_provider && model == original_model {
+                    return None;
+                }
+                let config = app_state.config.providers.get(provider.as_str())?;
+                let headers = provider.upstream_headers(config)?;
+                Some((provider, model, config, headers))
+            })
+            .take(cfg.max_attempts as usize)
+    });
     let mut attempt = 0;
-    let mut last_status = StatusCode::INTERNAL_SERVER_ERROR;
-    let mut last_error_msg = "Unknown error".to_string();
+    let mut used_fallback = false;
 
     loop {
-        let provider_config = match app_state.config.providers.get(current_provider.as_str()) {
-            Some(cfg) => cfg,
-            None => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    format!("Provider {} not configured", current_provider.as_str()),
-                )
-                    .into_response();
-            }
-        };
-
         // Determine request details
         let target_url: String;
         let target_body: Vec<u8>;
-        let outbound_headers: HeaderMap;
 
         if current_provider == ProviderKind::Anthropic {
             target_url = format!("{}/messages", provider_config.base_url);
-            outbound_headers = anthropic::build_request_headers(provider_config, Some(&auth.0));
 
             // Parse request and translate to Anthropic format
             match serde_json::from_slice::<anthropic::OpenAIRequest>(&body) {
@@ -136,13 +146,6 @@ pub async fn handle_chat_completions(
             }
         } else {
             target_url = format!("{}/chat/completions", provider_config.base_url);
-            outbound_headers = match current_provider {
-                ProviderKind::Groq => groq::build_request_headers(provider_config, Some(&auth.0)),
-                ProviderKind::Cerebras => cerebras::build_request_headers(provider_config, Some(&auth.0)),
-                ProviderKind::Gemini => gemini::build_request_headers(provider_config, Some(&auth.0)),
-                _ => openai::build_request_headers(provider_config, Some(&auth.0)),
-            };
-
             // Replace the model key in the request JSON
             match serde_json::from_slice::<serde_json::Value>(&body) {
                 Ok(mut val) => {
@@ -165,11 +168,11 @@ pub async fn handle_chat_completions(
         let req_builder = app_state
             .client
             .post(&target_url)
-            .headers(outbound_headers)
+            .headers(outbound_headers.clone())
             .body(target_body)
             .timeout(Duration::from_secs(provider_config.timeout_secs));
 
-        match req_builder.send().await {
+        let (mut last_status, mut last_error_msg) = match req_builder.send().await {
             Ok(response) => {
                 let status = response.status();
                 if status.is_success() {
@@ -190,9 +193,9 @@ pub async fn handle_chat_completions(
                                 match chunk_result {
                                     Ok(chunk) => {
                                         let lines = translator.process_chunk(&chunk);
-                                    Ok::<_, std::io::Error>(Bytes::from(lines.join("")))
+                                        Ok::<_, std::io::Error>(Bytes::from(lines.join("")))
                                     }
-                                    Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
+                                    Err(e) => Err(std::io::Error::other(e)),
                                 }
                             });
 
@@ -231,7 +234,7 @@ pub async fn handle_chat_completions(
                         }
 
                         let res_stream = response.bytes_stream().map(|chunk_result| {
-                            chunk_result.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                            chunk_result.map_err(std::io::Error::other)
                         });
 
                         return res_builder.body(Body::from_stream(res_stream)).unwrap();
@@ -259,16 +262,14 @@ pub async fn handle_chat_completions(
                             format!("Upstream returned non-retryable status {}", status_u16))
                             .into_response();
                     }
-                    last_status = StatusCode::from_u16(status_u16).unwrap_or(StatusCode::BAD_GATEWAY);
-                    last_error_msg = format!("Upstream provider returned status {}", status_u16);
+                    (status, format!("Upstream provider returned status {}", status_u16))
                 }
             }
             Err(e) => {
                 error!("Connection to provider {} failed: {}", current_provider.as_str(), e);
-                last_status = StatusCode::BAD_GATEWAY;
-                last_error_msg = format!("Failed to reach upstream provider: {}", e);
+                (StatusCode::BAD_GATEWAY, format!("Failed to reach upstream provider: {}", e))
             }
-        }
+        };
 
         // Retry / Fallback decision logic
         attempt += 1;
@@ -296,22 +297,19 @@ pub async fn handle_chat_completions(
             );
             tokio::time::sleep(sleep_duration).await;
         } else {
-            // Fallback check
-            if let Some(ref fallback_cfg) = app_state.config.fallback {
-                if fallback_cfg.enabled && current_provider == original_provider && current_model == original_model {
-                    let fb_model = &fallback_cfg.default_fallback_model;
-                    if let Some((fb_provider, fb_stripped)) = extract_provider_and_model(fb_model) {
-                        warn!(
-                            "Primary provider {} failed. Falling back to model {}",
-                            original_provider.as_str(),
-                            fb_model
-                        );
-                        current_provider = fb_provider;
-                        current_model = fb_stripped;
-                        attempt = 0; // Reset attempts for the fallback model
-                        continue;
-                    }
-                }
+            if let Some((provider, model, config, headers)) = fallbacks.as_mut().and_then(Iterator::next) {
+                warn!("Falling back to provider {} model {}", provider.as_str(), model);
+                current_provider = provider;
+                current_model = model;
+                provider_config = config;
+                outbound_headers = headers;
+                attempt = 0;
+                used_fallback = true;
+                continue;
+            }
+            if fallback_config.is_some() && !used_fallback {
+                last_status = StatusCode::SERVICE_UNAVAILABLE;
+                last_error_msg.push_str("; no usable fallback provider with a configured API key");
             }
 
             // Record failed request metric
@@ -398,10 +396,15 @@ pub async fn handle_messages(
     }
 
     let target_url = format!("{}/messages", provider_config.base_url);
-    let mut outbound_headers = if current_provider == ProviderKind::Anthropic {
-        anthropic::build_request_headers(provider_config, Some(&auth.0))
-    } else {
-        openai::build_request_headers(provider_config, Some(&auth.0))
+    let Some(mut outbound_headers) = current_provider.upstream_headers(provider_config) else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!(
+                "No usable API key configured for provider {}",
+                current_provider.as_str()
+            ),
+        )
+            .into_response();
     };
 
     // Forward any extra headers
@@ -449,7 +452,7 @@ pub async fn handle_messages(
             }
 
             let res_stream = response.bytes_stream().map(|chunk_result| {
-                chunk_result.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                chunk_result.map_err(std::io::Error::other)
             });
 
             res_builder.body(Body::from_stream(res_stream)).unwrap()

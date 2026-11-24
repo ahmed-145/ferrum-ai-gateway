@@ -11,12 +11,24 @@ pub struct ServerConfig {
     pub max_connections: Option<usize>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct ProviderConfig {
+    pub api_key: Option<String>,
     pub base_url: String,
     pub timeout_secs: u64,
     pub max_retries: u32,
     pub header_style: Option<String>,
+}
+
+impl std::fmt::Debug for ProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderConfig")
+            .field("base_url", &self.base_url)
+            .field("timeout_secs", &self.timeout_secs)
+            .field("max_retries", &self.max_retries)
+            .field("header_style", &self.header_style)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -33,6 +45,8 @@ pub struct MetricsConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct FallbackConfig {
+    #[serde(default)]
+    pub additional_fallback_models: Vec<String>,
     pub enabled: bool,
     pub default_fallback_model: String,
     pub max_attempts: u32,
@@ -63,6 +77,14 @@ impl AppConfig {
         // Override server host if FERRUM_HOST environment variable is set
         if let Ok(host) = env::var("FERRUM_HOST") {
             config.server.host = host;
+        }
+
+        for (name, provider) in &mut config.providers {
+            if let Ok(key) = env::var(format!("{}_API_KEY", name.to_ascii_uppercase())) {
+                if !key.trim().is_empty() {
+                    provider.api_key = Some(key);
+                }
+            }
         }
 
         Ok(config)

@@ -4,6 +4,8 @@ pub mod gemini;
 pub mod groq;
 pub mod openai;
 
+use crate::config::ProviderConfig;
+use reqwest::header::{HeaderMap, AUTHORIZATION};
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +33,29 @@ impl FromStr for ProviderKind {
 }
 
 impl ProviderKind {
+    pub(crate) fn upstream_headers(self, config: &ProviderConfig) -> Option<HeaderMap> {
+        let key = config.api_key.as_deref()?.trim();
+        if key.is_empty() {
+            return None;
+        }
+
+        let bearer = format!("Bearer {key}");
+        let mut headers = match self {
+            Self::Anthropic => anthropic::build_request_headers(config, Some(&bearer)),
+            Self::Groq => groq::build_request_headers(config, Some(&bearer)),
+            Self::Cerebras => cerebras::build_request_headers(config, Some(&bearer)),
+            Self::Gemini => gemini::build_request_headers(config, Some(&bearer)),
+            Self::OpenAI => openai::build_request_headers(config, Some(&bearer)),
+        };
+        let auth = if self == Self::Anthropic {
+            headers.get_mut("x-api-key")
+        } else {
+            headers.get_mut(AUTHORIZATION)
+        };
+        auth?.set_sensitive(true);
+        Some(headers)
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::OpenAI => "openai",
