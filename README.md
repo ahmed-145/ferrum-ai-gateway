@@ -480,8 +480,7 @@ ferrum/
 │
 ├── ferrum.toml              # Default config (no secrets — safe to commit)
 ├── .env.example             # API key template (copy to .env, never commit .env)
-├── Cargo.toml               # Dependencies + test targets
-└── ferrum-PRD.md            # Full product requirements document
+└── Cargo.toml               # Dependencies + test targets
 ```
 
 ---
